@@ -1,0 +1,53 @@
+name: build
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v1
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ secrets.AWS_REGION }}
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v2
+      with:
+        dotnet-version: 6.0.x
+
+    - name: Setup NuGet.exe for use with actions
+      uses: NuGet/setup-nuget@v1.0.6
+
+    - name: Restore dependencies
+      run: dotnet restore helloworld/helloworld.sln  
+      
+    - name: Build
+      run: dotnet build helloworld/helloworld.sln --no-restore
+
+    - name: Test
+      run: dotnet test helloworld/helloworld.sln --no-restore
+
+    - name: Set SHA
+      id: vars
+      run: echo "::set-output name=sha_short::$(git rev-parse --short $GITHUB_SHA)"
+
+    - name: Package
+      env:
+        DOMAIN_OWNER: ${{ secrets.DOMAIN_OWNER }}
+        SHA_SHORT: ${{ steps.vars.outputs.sha_short }}
+        PACKAGE_PAT: ${{ secrets.PACKAGE_PAT }}
+      run: |
+        aws codeartifact login --tool nuget --domain horvatic --domain-owner "${DOMAIN_OWNER}" --repository helloworld &>/dev/null
+        cd helloworld
+        dotnet pack --configuration Release --version-suffix "${SHA_SHORT}"
+        nuget push "helloworldlib/bin/Release/helloworldlib.1.0.0-${SHA_SHORT}".nupkg -Source horvatic/helloworld -SkipDuplicate  &>/dev/null
